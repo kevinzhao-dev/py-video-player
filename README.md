@@ -13,14 +13,41 @@ A lightweight command-line video player built with Python and OpenCV.
 
 ## Installation
 
-1. **Install Python dependencies**:
+### Option 1: Install as CLI tool (Recommended)
+
+```bash
+# Install from source
+git clone https://github.com/kevinzhao-dev/py-video-player.git
+cd py-video-player
+pip install -e .
+
+# Or install directly from PyPI (when published)
+pip install simple-video-player
+```
+
+After installation, you can use `pp` command from anywhere:
+
+```bash
+pp ~/Movies
+pp video.mp4
+```
+
+### Option 2: Run from source
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/kevinzhao-dev/py-video-player.git
+   cd py-video-player
+   ```
+
+2. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Make the script executable** (optional):
+3. **Run the script**:
    ```bash
-   chmod +x pp.py
+   python pp.py
    ```
 
 ## Usage
@@ -28,20 +55,21 @@ A lightweight command-line video player built with Python and OpenCV.
 ### Basic Usage
 
 ```bash
-# Play all videos in current directory
-python pp.py
+# Using installed CLI tool
+pp                      # Play all videos in current directory
+pp path/to/video.mp4    # Play a specific video file
+pp path/to/directory    # Play all videos in a directory
 
-# Play a specific video file
-python pp.py path/to/video.mp4
-
-# Play all videos in a directory
-python pp.py path/to/video/directory
+# Or using Python script directly
+python pp.py            # Play all videos in current directory
+python pp.py path/to/video.mp4    # Play a specific video file
+python pp.py path/to/directory    # Play all videos in a directory
 ```
 
 ### Command Line Options
 
 ```bash
-python pp.py [PATH] [OPTIONS]
+pp [PATH] [OPTIONS]
 
 Options:
   --seek-short SECONDS    Short seek duration (default: 10 seconds)
@@ -64,13 +92,13 @@ Options:
 
 ```bash
 # Play videos with custom seek intervals
-python pp.py ~/Movies --seek-short 5 --seek-long 30
+pp ~/Movies --seek-short 5 --seek-long 30
 
 # Play a specific video
-python pp.py vacation.mp4
+pp vacation.mp4
 
 # Play all videos in Downloads folder
-python pp.py ~/Downloads
+pp ~/Downloads
 ```
 
 ## Features in Detail
@@ -91,10 +119,43 @@ When you specify a directory or a single video file, the player automatically cr
 - WebM
 - M4V
 
+## Development
+
+### Running Tests
+
+```bash
+# Install test dependencies
+pip install pytest pytest-cov
+
+# Run tests
+pytest
+
+# Run tests with coverage
+pytest --cov=pp --cov-report=html
+```
+
+### Building the Package
+
+```bash
+# Install build dependencies
+pip install build
+
+# Build the package
+python -m build
+```
+
 ## Requirements
 
 - Python 3.6+
 - OpenCV Python (`opencv-python>=4.5.0`)
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests: `pytest`
+5. Submit a pull request
 
 ## License
 
