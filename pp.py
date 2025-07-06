@@ -43,10 +43,12 @@ class VideoPlayer:
 
         # Audio support using ffplay
         self.audio_process = None
-        self.audio_available = self.check_ffplay_available()
 
-        # Setup logging
+        # Setup logging first (needed by other methods)
         self.setup_logging()
+
+        # Check audio availability after logging is set up
+        self.audio_available = self.check_ffplay_available()
 
         # Supported video extensions
         self.video_extensions = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'}

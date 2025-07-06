@@ -6,6 +6,7 @@ Unit tests for VideoPlayer class
 import unittest
 import tempfile
 import json
+import cv2
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import sys
@@ -105,10 +106,10 @@ class TestVideoPlayer(unittest.TestCase):
         mock_cap = Mock()
         mock_cap.isOpened.return_value = True
         mock_cap.get.side_effect = lambda prop: {
-            'cv2.CAP_PROP_FPS': 30.0,
-            'cv2.CAP_PROP_FRAME_COUNT': 1800.0,
-            'cv2.CAP_PROP_POS_MSEC': 0.0
-        }.get(str(prop), 0.0)
+            cv2.CAP_PROP_FPS: 30.0,
+            cv2.CAP_PROP_FRAME_COUNT: 1800.0,
+            cv2.CAP_PROP_POS_MSEC: 0.0
+        }.get(prop, 0.0)
         mock_cv2_capture.return_value = mock_cap
 
         player = VideoPlayer(str(self.temp_path))
@@ -152,10 +153,10 @@ class TestVideoPlayer(unittest.TestCase):
         # Mock cv2.VideoCapture
         mock_cap = Mock()
         mock_cap.get.side_effect = lambda prop: {
-            'cv2.CAP_PROP_POS_MSEC': 10000.0,  # 10 seconds
-            'cv2.CAP_PROP_FPS': 30.0,
-            'cv2.CAP_PROP_FRAME_COUNT': 1800.0
-        }.get(str(prop), 0.0)
+            cv2.CAP_PROP_POS_MSEC: 10000.0,  # 10 seconds
+            cv2.CAP_PROP_FPS: 30.0,
+            cv2.CAP_PROP_FRAME_COUNT: 1800.0
+        }.get(prop, 0.0)
         mock_cv2_capture.return_value = mock_cap
 
         player = VideoPlayer(str(self.temp_path))
@@ -165,11 +166,11 @@ class TestVideoPlayer(unittest.TestCase):
 
         # Test seeking forward
         player.seek(10)
-        mock_cap.set.assert_called_with('cv2.CAP_PROP_POS_MSEC', 20000.0)
+        mock_cap.set.assert_called_with(cv2.CAP_PROP_POS_MSEC, 20000.0)
 
         # Test seeking backward
         player.seek(-5)
-        mock_cap.set.assert_called_with('cv2.CAP_PROP_POS_MSEC', 5000.0)
+        mock_cap.set.assert_called_with(cv2.CAP_PROP_POS_MSEC, 5000.0)
 
     def test_next_video(self):
         """Test next video functionality"""
