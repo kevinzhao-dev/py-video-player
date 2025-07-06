@@ -20,10 +20,12 @@ from typing import List, Dict, Optional
 __version__ = "0.1.0"
 
 class VideoPlayer:
-    def __init__(self, path: str, seek_short: int = 10, seek_long: int = 60):
+    def __init__(self, path: str, seek_short: int = 10, seek_long: int = 60, throttle_delay: float = 0.2, continuous: bool = False):
         self.path = Path(path)
         self.seek_short = seek_short  # seconds
         self.seek_long = seek_long    # seconds
+        self.throttle_delay = throttle_delay  # seconds
+        self.continuous = continuous  # auto-advance to next video
         self.video_files = []
         self.current_index = 0
         self.is_playing = True
@@ -43,6 +45,11 @@ class VideoPlayer:
 
         # Audio support using ffplay
         self.audio_process = None
+
+        # Throttling for seek operations
+        self.pending_seek_operations = []
+        self.seek_throttle_timer = None
+        self.execute_pending_seek = False  # Flag to execute seeks in main thread
 
         # Setup logging first (needed by other methods)
         self.setup_logging()
@@ -260,13 +267,18 @@ class VideoPlayer:
         """Stop current audio playback"""
         if self.audio_process and self.audio_process.poll() is None:
             try:
-                self.audio_process.terminate()
-                self.audio_process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.audio_process.kill()
-            except:
+                # Force kill the process group to prevent threading issues
+                if hasattr(os, 'killpg'):
+                    os.killpg(os.getpgid(self.audio_process.pid), signal.SIGKILL)
+                else:
+                    self.audio_process.kill()
+                self.audio_process.wait(timeout=1)
+            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                # Process already dead or can't be killed
                 pass
-            self.audio_process = None
+            except Exception as e:
+                self.logger.warning(f"Error stopping audio: {e}")
+        self.audio_process = None
 
     def play_audio(self, video_path: Path, start_time: float = 0):
         """Play audio for the given video file using ffplay"""
@@ -276,6 +288,9 @@ class VideoPlayer:
         try:
             # Stop any existing audio
             self.stop_audio()
+
+            # Small delay to ensure process is fully terminated
+            time.sleep(0.1)
 
             # Build ffplay command
             cmd = [
@@ -408,6 +423,86 @@ class VideoPlayer:
             self.stop_audio()
             self.play_audio(current_video, new_time)
 
+    def seek_to_position(self, position: float):
+        """Seek to absolute position in seconds"""
+        if self.cap is None:
+            return
+
+        # Don't seek beyond video duration
+        duration = self.frame_count / self.fps
+        position = max(0, min(position, duration))
+
+        # Update video position
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, position * 1000)
+
+        # Restart audio from new position to maintain sync
+        if self.audio_available and self.audio_process:
+            current_video = self.video_files[self.current_index]
+            self.stop_audio()
+            self.play_audio(current_video, position)
+
+    def throttled_seek(self, seconds: float):
+        """Add seek operation to throttle queue"""
+        # Add to pending operations
+        self.pending_seek_operations.append(seconds)
+
+        # Cancel existing timer if any
+        if self.seek_throttle_timer:
+            self.seek_throttle_timer.cancel()
+
+        # Stop audio immediately to prevent assertion errors during rapid seeking
+        self.stop_audio()
+
+        # Start new timer to set flag for main thread execution
+        self.seek_throttle_timer = threading.Timer(self.throttle_delay, self.set_execute_seek_flag)
+        self.seek_throttle_timer.start()
+
+    def set_execute_seek_flag(self):
+        """Set flag for main thread to execute pending seeks"""
+        self.execute_pending_seek = True
+
+    def execute_throttled_seeks(self):
+        """Execute accumulated seek operations"""
+        if not self.pending_seek_operations:
+            return
+
+        # Calculate total seek amount
+        total_seek = sum(self.pending_seek_operations)
+
+        # Apply throttling if too many operations
+        if len(self.pending_seek_operations) >= 3:
+            # For 3+ operations, use 5x multiplier for efficiency
+            multiplier = 5.0
+            total_seek *= multiplier
+            self.show_status(f"Fast seek: {total_seek:.0f}s ({len(self.pending_seek_operations)} ops)")
+        else:
+            # For 1-2 operations, show normal seek
+            direction = "▶" if total_seek > 0 else "◀"
+            self.show_status(f"{direction} {abs(total_seek):.0f}s")
+
+        # Clear pending operations
+        self.pending_seek_operations.clear()
+        self.execute_pending_seek = False
+
+        # Execute the accumulated seek (safe from main thread)
+        if self.cap is None:
+            return
+
+        current_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        new_time = max(0, current_time + total_seek)
+
+        # Don't seek beyond video duration
+        duration = self.frame_count / self.fps
+        new_time = min(new_time, duration)
+
+        # Update video position
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, new_time * 1000)
+
+        # Restart audio from new position
+        if self.audio_available:
+            current_video = self.video_files[self.current_index]
+            self.play_audio(current_video, new_time)
+
     def change_playback_speed(self, delta: float):
         """Change playback speed by delta amount"""
         old_speed = self.playback_speed
@@ -441,6 +536,10 @@ class VideoPlayer:
         last_frame_time = time.time()
 
         while True:
+            # Check for pending seek operations from timer thread
+            if self.execute_pending_seek:
+                self.execute_throttled_seeks()
+
             if self.is_playing:
                 current_time = time.time()
                 time_since_last_frame = current_time - last_frame_time
@@ -449,12 +548,20 @@ class VideoPlayer:
                 if time_since_last_frame >= (1.0 / (self.fps * self.playback_speed)):
                     ret, frame = self.cap.read()
                     if not ret:
-                        # End of video, go to next
-                        self.next_video()
-                        # Update delay for new video
-                        delay = int(1000 / self.fps) if self.fps > 0 else 33
-                        last_frame_time = time.time()
-                        continue
+                        # End of video
+                        if self.continuous:
+                            # Auto-advance to next video
+                            self.next_video()
+                            # Update delay for new video
+                            delay = int(1000 / self.fps) if self.fps > 0 else 33
+                            last_frame_time = time.time()
+                            continue
+                        else:
+                            # Pause and wait for user input
+                            self.is_playing = False
+                            self.pause_audio()
+                            self.show_status("Video ended - Press Enter for next video")
+                            continue
 
                     # Add status overlay
                     frame_with_status = self.draw_status_overlay(frame)
@@ -479,20 +586,24 @@ class VideoPlayer:
                 self.set_audio_volume(self.is_muted)
                 self.show_status("Muted" if self.is_muted else "Unmuted")
             elif key == 81 or key == 2:  # Left arrow - seek backward (short)
-                self.seek(-self.seek_short)
-                self.show_status(f"◀ {self.seek_short}s")
+                self.throttled_seek(-self.seek_short)
             elif key == 83 or key == 3:  # Right arrow - seek forward (short)
-                self.seek(self.seek_short)
-                self.show_status(f"▶ {self.seek_short}s")
+                self.throttled_seek(self.seek_short)
             elif key == 82 or key == 0:  # Up arrow - seek forward (long)
-                self.seek(self.seek_long)
-                self.show_status(f"▶▶ {self.seek_long}s")
+                self.throttled_seek(self.seek_long)
             elif key == 84 or key == 1:  # Down arrow - seek backward (long)
-                self.seek(-self.seek_long)
-                self.show_status(f"◀◀ {self.seek_long}s")
+                self.throttled_seek(-self.seek_long)
+            elif key == ord('s'):  # Start of video
+                self.seek_to_position(0)
+                self.show_status("Start of video")
+            elif key == ord('e'):  # End of video
+                duration = self.frame_count / self.fps
+                self.seek_to_position(duration - 5)  # 5 seconds before end
+                self.show_status("End of video")
             elif key == ord('j'):  # Previous video
                 self.prev_video()
             elif key == ord('k') or key == 13:  # Next video (k or Enter)
+                # Always allow next video, whether playing or paused
                 self.next_video()
             elif key == ord(']'):  # Speed up 10%
                 self.change_playback_speed(0.1)
@@ -507,6 +618,10 @@ class VideoPlayer:
             current_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
             self.timestamps[str(self.video_files[self.current_index])] = current_time
             self.cap.release()
+
+        # Cancel any pending seek operations
+        if self.seek_throttle_timer:
+            self.seek_throttle_timer.cancel()
 
         # Stop audio
         self.stop_audio()
@@ -533,22 +648,33 @@ def main():
                        help='Short seek duration in seconds (default: 10)')
     parser.add_argument('--seek-long', type=int, default=60,
                        help='Long seek duration in seconds (default: 60)')
+    parser.add_argument('--throttle-delay', type=float, default=0.2,
+                       help='Throttle delay for rapid seeking in seconds (default: 0.2)')
+    parser.add_argument('--continuous', action='store_true',
+                       help='Continuous playing mode - auto-advance to next video (default: pause at end)')
 
     args = parser.parse_args()
 
-    player = VideoPlayer(args.path, args.seek_short, args.seek_long)
+    player = VideoPlayer(args.path, args.seek_short, args.seek_long, args.throttle_delay, args.continuous)
 
     logger = logging.getLogger(__name__)
     logger.info("Controls:")
     logger.info("  Space: Pause/Play")
     logger.info("  Left/Right: Seek ±10s (or custom)")
     logger.info("  Up/Down: Seek ±1min (or custom)")
+    logger.info("  s: Jump to start of video")
+    logger.info("  e: Jump to end of video")
     logger.info("  j: Previous video")
     logger.info("  k/Enter: Next video")
     logger.info("  m: Mute/Unmute")
     logger.info("  ]: Speed up 10% (max 3.0x)")
     logger.info("  [: Speed down 10% (min 0.1x)")
     logger.info("  q/ESC: Quit")
+    if args.continuous:
+        logger.info("\nContinuous mode: Videos will auto-advance")
+    else:
+        logger.info("\nPause mode: Videos will pause at end, press Enter for next video")
+    print()
     print()
 
     try:
