@@ -8,6 +8,10 @@ import cv2
 import os
 import sys
 import json
+import time
+import threading
+import subprocess
+import signal
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -27,6 +31,10 @@ class VideoPlayer:
         self.fps = 30
         self.frame_count = 0
         self.current_frame = 0
+
+        # Audio support using ffplay
+        self.audio_process = None
+        self.audio_available = self.check_ffplay_available()
 
         # Supported video extensions
         self.video_extensions = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
@@ -87,6 +95,101 @@ class VideoPlayer:
         except:
             pass
 
+    def check_ffplay_available(self):
+        """Check if ffplay is available on the system"""
+        try:
+            subprocess.run(['ffplay', '-version'], stdout=subprocess.DEVNULL, 
+                         stderr=subprocess.DEVNULL, check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("Warning: ffplay not found. Audio playback disabled.")
+            print("Install ffmpeg to enable audio: https://ffmpeg.org/download.html")
+            return False
+
+    def stop_audio(self):
+        """Stop current audio playback"""
+        if self.audio_process and self.audio_process.poll() is None:
+            try:
+                self.audio_process.terminate()
+                self.audio_process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.audio_process.kill()
+            except:
+                pass
+            self.audio_process = None
+
+    def play_audio(self, video_path: Path, start_time: float = 0):
+        """Play audio for the given video file using ffplay"""
+        if not self.audio_available:
+            return
+
+        try:
+            # Stop any existing audio
+            self.stop_audio()
+
+            # Build ffplay command
+            cmd = [
+                'ffplay',
+                '-nodisp',  # No video display
+                '-autoexit',  # Exit when playback finishes
+                '-loglevel', 'quiet',  # Suppress ffplay output
+            ]
+
+            # Add start time if specified
+            if start_time > 0:
+                cmd.extend(['-ss', str(start_time)])
+
+            # Add volume control
+            if self.is_muted:
+                cmd.extend(['-af', 'volume=0'])
+
+            cmd.append(str(video_path))
+
+            # Start audio process
+            self.audio_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setsid if hasattr(os, 'setsid') else None
+            )
+
+        except Exception as e:
+            print(f"Warning: Could not start audio for {video_path.name}: {e}")
+
+    def pause_audio(self):
+        """Pause audio playback"""
+        if self.audio_process and self.audio_process.poll() is None:
+            try:
+                # Send SIGSTOP to pause
+                if hasattr(os, 'killpg'):
+                    os.killpg(os.getpgid(self.audio_process.pid), signal.SIGSTOP)
+                else:
+                    self.audio_process.send_signal(signal.SIGSTOP)
+            except:
+                pass
+
+    def resume_audio(self):
+        """Resume audio playback"""
+        if self.audio_process and self.audio_process.poll() is None:
+            try:
+                # Send SIGCONT to resume
+                if hasattr(os, 'killpg'):
+                    os.killpg(os.getpgid(self.audio_process.pid), signal.SIGCONT)
+                else:
+                    self.audio_process.send_signal(signal.SIGCONT)
+            except:
+                pass
+
+    def set_audio_volume(self, muted: bool):
+        """Set audio volume based on mute state"""
+        # For simplicity, we restart audio with new volume
+        # In a more advanced implementation, we could use ffmpeg filters
+        if self.audio_process:
+            current_video = self.video_files[self.current_index]
+            current_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if self.cap else 0
+            self.stop_audio()
+            self.play_audio(current_video, current_time)
+
     def load_video(self, index: int):
         """Load video at given index"""
         if 0 <= index < len(self.video_files):
@@ -94,6 +197,9 @@ class VideoPlayer:
             if self.cap is not None:
                 current_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                 self.timestamps[str(self.video_files[self.current_index])] = current_time
+
+            # Stop current audio
+            self.stop_audio()
 
             self.current_index = index
             video_path = self.video_files[self.current_index]
@@ -113,6 +219,9 @@ class VideoPlayer:
             saved_time = self.timestamps.get(str(video_path), 0)
             if saved_time > 0:
                 self.cap.set(cv2.CAP_PROP_POS_MSEC, saved_time * 1000)
+
+            # Start audio playback
+            self.play_audio(video_path, saved_time)
 
             print(f"Playing: {video_path.name} ({self.current_index + 1}/{len(self.video_files)})")
 
@@ -147,26 +256,44 @@ class VideoPlayer:
 
         cv2.namedWindow('Video Player', cv2.WINDOW_NORMAL)
 
+        # Calculate proper delay based on FPS
+        delay = int(1000 / self.fps) if self.fps > 0 else 33  # Default to ~30 FPS if fps is 0
+        last_frame_time = time.time()
+
         while True:
             if self.is_playing:
-                ret, frame = self.cap.read()
-                if not ret:
-                    # End of video, go to next
-                    self.next_video()
-                    continue
+                current_time = time.time()
+                time_since_last_frame = current_time - last_frame_time
 
-                cv2.imshow('Video Player', frame)
+                # Only read new frame if enough time has passed
+                if time_since_last_frame >= (1.0 / self.fps):
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        # End of video, go to next
+                        self.next_video()
+                        # Update delay for new video
+                        delay = int(1000 / self.fps) if self.fps > 0 else 33
+                        last_frame_time = time.time()
+                        continue
 
-            # Handle keyboard input
+                    cv2.imshow('Video Player', frame)
+                    last_frame_time = current_time
+
+            # Handle keyboard input with proper delay
             key = cv2.waitKey(1 if self.is_playing else 0) & 0xFF
 
             if key == ord('q') or key == 27:  # ESC key
                 break
             elif key == ord(' '):  # Space - pause/play
                 self.is_playing = not self.is_playing
+                if self.is_playing:
+                    self.resume_audio()
+                else:
+                    self.pause_audio()
                 print("Paused" if not self.is_playing else "Playing")
             elif key == ord('m'):  # Mute toggle
                 self.is_muted = not self.is_muted
+                self.set_audio_volume(self.is_muted)
                 print("Muted" if self.is_muted else "Unmuted")
             elif key == 81 or key == 2:  # Left arrow - seek backward (short)
                 self.seek(-self.seek_short)
@@ -192,20 +319,21 @@ class VideoPlayer:
             self.timestamps[str(self.video_files[self.current_index])] = current_time
             self.cap.release()
 
+        # Stop audio
+        self.stop_audio()
+
         cv2.destroyAllWindows()
         self.save_timestamps()
 
     def next_video(self):
         """Switch to next video"""
         next_index = (self.current_index + 1) % len(self.video_files)
-        if self.load_video(next_index):
-            self.update_window_title(self.video_files[self.current_index].name)
+        self.load_video(next_index)
 
     def prev_video(self):
         """Switch to previous video"""
         prev_index = (self.current_index - 1) % len(self.video_files)
-        if self.load_video(prev_index):
-            self.update_window_title(self.video_files[self.current_index].name)
+        self.load_video(prev_index)
 
 
 def main():
