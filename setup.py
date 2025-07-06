@@ -10,7 +10,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="simple-video-player",
-    version="0.0.1",
+    version="0.1.0",
     author="kevinzhao",
     author_email="kevin.zhao.dev@gmail.com",
     description="A lightweight command-line video player built with Python and OpenCV",

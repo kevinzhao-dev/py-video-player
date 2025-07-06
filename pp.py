@@ -17,7 +17,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict, Optional
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 class VideoPlayer:
     def __init__(self, path: str, seek_short: int = 10, seek_long: int = 60):
