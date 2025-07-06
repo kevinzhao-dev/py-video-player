@@ -13,6 +13,7 @@ import threading
 import subprocess
 import signal
 import logging
+import numpy as np
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -38,6 +39,7 @@ class VideoPlayer:
         self.status_text = ""
         self.status_start_time = 0
         self.status_duration = 2.5  # Show status for 2.5 seconds
+        self.available_fonts = self.get_available_fonts()
 
         # Audio support using ffplay
         self.audio_process = None
@@ -73,6 +75,44 @@ class VideoPlayer:
         self.status_start_time = time.time()
         self.logger.info(message)
 
+    def get_available_fonts(self):
+        """Get list of available fonts with fallback options"""
+        # List of fonts to try in order of preference
+        font_options = [
+            cv2.FONT_HERSHEY_SIMPLEX,
+            cv2.FONT_HERSHEY_PLAIN,
+            cv2.FONT_HERSHEY_DUPLEX,
+            cv2.FONT_HERSHEY_COMPLEX,
+            cv2.FONT_HERSHEY_TRIPLEX,
+            cv2.FONT_HERSHEY_COMPLEX_SMALL,
+            cv2.FONT_HERSHEY_SCRIPT_SIMPLEX,
+            cv2.FONT_HERSHEY_SCRIPT_COMPLEX
+        ]
+
+        # Test each font to see which ones work
+        available = []
+        test_frame = np.zeros((100, 300, 3), dtype=np.uint8)
+
+        for font in font_options:
+            try:
+                # Try to get text size and put text
+                size = cv2.getTextSize("Test", font, 1.0, 2)
+                if size[0][0] > 0 and size[0][1] > 0:  # Valid size
+                    cv2.putText(test_frame, "Test", (10, 30), font, 1.0, (255, 255, 255), 2)
+                    available.append(font)
+            except Exception:
+                continue
+
+        # If no fonts work, fallback to SIMPLEX
+        if not available:
+            available = [cv2.FONT_HERSHEY_SIMPLEX]
+
+        return available
+
+    def get_working_font(self):
+        """Get the first working font from available fonts"""
+        return self.available_fonts[0] if self.available_fonts else cv2.FONT_HERSHEY_SIMPLEX
+
     def draw_status_overlay(self, frame):
         """Draw status overlay on frame if active"""
         if not self.status_text:
@@ -96,23 +136,60 @@ class VideoPlayer:
         overlay = frame.copy()
         height, width = frame.shape[:2]
 
-        # Status background
-        text_size = cv2.getTextSize(self.status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
-        text_x = (width - text_size[0]) // 2
-        text_y = height - 80
+        # Get working font
+        font = self.get_working_font()
+        font_scale = 0.8
+        thickness = 2
 
-        # Semi-transparent background
-        cv2.rectangle(overlay, 
-                     (text_x - 20, text_y - text_size[1] - 20),
-                     (text_x + text_size[0] + 20, text_y + 20),
-                     (0, 0, 0), -1)
+        # Try to get text size with fallback
+        try:
+            text_size = cv2.getTextSize(self.status_text, font, font_scale, thickness)[0]
+        except Exception:
+            # Fallback if getTextSize fails
+            self.logger.warning("Font rendering issue, using fallback")
+            font = cv2.FONT_HERSHEY_PLAIN
+            font_scale = 1.0
+            try:
+                text_size = cv2.getTextSize(self.status_text, font, font_scale, thickness)[0]
+            except Exception:
+                # Ultimate fallback - estimate size
+                text_size = (len(self.status_text) * 12, 20)
 
-        # Status text
-        cv2.putText(overlay, self.status_text, (text_x, text_y), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+        # Position at top-left with padding
+        padding = 15
+        text_x = padding
+        text_y = padding + text_size[1]
 
-        # Blend with alpha
-        frame = cv2.addWeighted(frame, 1 - alpha * 0.7, overlay, alpha * 0.7, 0)
+        # Semi-transparent background rectangle
+        bg_x1 = text_x - 10
+        bg_y1 = text_y - text_size[1] - 5
+        bg_x2 = text_x + text_size[0] + 10
+        bg_y2 = text_y + 10
+
+        # Ensure background doesn't go outside frame
+        bg_x1 = max(0, bg_x1)
+        bg_y1 = max(0, bg_y1)
+        bg_x2 = min(width, bg_x2)
+        bg_y2 = min(height, bg_y2)
+
+        try:
+            # Draw semi-transparent background
+            cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+
+            # Draw status text
+            cv2.putText(overlay, self.status_text, (text_x, text_y), 
+                       font, font_scale, (255, 255, 255), thickness)
+        except Exception as e:
+            # If drawing fails, log but don't crash
+            self.logger.warning(f"Failed to draw status overlay: {e}")
+            return frame
+
+        # Blend with alpha for fade effect
+        try:
+            frame = cv2.addWeighted(frame, 1 - alpha * 0.8, overlay, alpha * 0.8, 0)
+        except Exception:
+            # If blending fails, return original frame
+            return frame
 
         return frame
 

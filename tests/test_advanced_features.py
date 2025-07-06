@@ -212,6 +212,45 @@ class TestStatusDisplay(unittest.TestCase):
         self.assertFalse(np.array_equal(result1, test_frame))
         self.assertFalse(np.array_equal(result2, test_frame))
 
+    @patch('pp.VideoPlayer.check_ffplay_available')
+    def test_font_fallback_system(self, mock_ffplay):
+        """Test font fallback system"""
+        mock_ffplay.return_value = False
+        player = VideoPlayer(str(self.temp_path))
+
+        # Test that available fonts list is populated
+        self.assertIsInstance(player.available_fonts, list)
+        self.assertGreater(len(player.available_fonts), 0)
+
+        # Test getting working font
+        font = player.get_working_font()
+        self.assertIsInstance(font, int)  # OpenCV font constants are integers
+
+    @patch('pp.VideoPlayer.check_ffplay_available')
+    def test_status_position_top_left(self, mock_ffplay):
+        """Test that status is positioned at top-left"""
+        mock_ffplay.return_value = False
+        player = VideoPlayer(str(self.temp_path))
+
+        # Create a test frame
+        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        # Show status
+        player.show_status("Top Left Test")
+
+        # Get the result frame
+        result = player.draw_status_overlay(test_frame)
+
+        # Check that top-left area has been modified (has non-zero pixels)
+        top_left_region = result[0:50, 0:200]  # Top-left corner region
+        has_modification = np.any(top_left_region > 0)
+        self.assertTrue(has_modification, "Status should appear in top-left region")
+
+        # Check that bottom area is unchanged (should be all zeros)
+        bottom_region = result[400:480, 0:640]  # Bottom region
+        is_bottom_unchanged = np.all(bottom_region == 0)
+        self.assertTrue(is_bottom_unchanged, "Bottom region should be unchanged")
+
 
 class TestLoggingSystem(unittest.TestCase):
     """Test cases for logging system"""
