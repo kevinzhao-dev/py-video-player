@@ -242,7 +242,14 @@ class VideoPlayer:
         duration = self.frame_count / self.fps
         new_time = min(new_time, duration)
 
+        # Update video position
         self.cap.set(cv2.CAP_PROP_POS_MSEC, new_time * 1000)
+
+        # Restart audio from new position to maintain sync
+        if self.audio_available and self.audio_process:
+            current_video = self.video_files[self.current_index]
+            self.stop_audio()
+            self.play_audio(current_video, new_time)
 
     def update_window_title(self, video_name: str):
         """Update window title with current video name"""
