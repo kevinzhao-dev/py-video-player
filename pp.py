@@ -20,11 +20,12 @@ from typing import List, Dict, Optional
 __version__ = "0.1.0"
 
 class VideoPlayer:
-    def __init__(self, path: str, seek_short: int = 10, seek_long: int = 60, throttle_delay: float = 0.2):
+    def __init__(self, path: str, seek_short: int = 10, seek_long: int = 60, throttle_delay: float = 0.2, continuous: bool = False):
         self.path = Path(path)
         self.seek_short = seek_short  # seconds
         self.seek_long = seek_long    # seconds
         self.throttle_delay = throttle_delay  # seconds
+        self.continuous = continuous  # auto-advance to next video
         self.video_files = []
         self.current_index = 0
         self.is_playing = True
@@ -547,12 +548,20 @@ class VideoPlayer:
                 if time_since_last_frame >= (1.0 / (self.fps * self.playback_speed)):
                     ret, frame = self.cap.read()
                     if not ret:
-                        # End of video, go to next
-                        self.next_video()
-                        # Update delay for new video
-                        delay = int(1000 / self.fps) if self.fps > 0 else 33
-                        last_frame_time = time.time()
-                        continue
+                        # End of video
+                        if self.continuous:
+                            # Auto-advance to next video
+                            self.next_video()
+                            # Update delay for new video
+                            delay = int(1000 / self.fps) if self.fps > 0 else 33
+                            last_frame_time = time.time()
+                            continue
+                        else:
+                            # Pause and wait for user input
+                            self.is_playing = False
+                            self.pause_audio()
+                            self.show_status("Video ended - Press Enter for next video")
+                            continue
 
                     # Add status overlay
                     frame_with_status = self.draw_status_overlay(frame)
@@ -594,6 +603,7 @@ class VideoPlayer:
             elif key == ord('j'):  # Previous video
                 self.prev_video()
             elif key == ord('k') or key == 13:  # Next video (k or Enter)
+                # Always allow next video, whether playing or paused
                 self.next_video()
             elif key == ord(']'):  # Speed up 10%
                 self.change_playback_speed(0.1)
@@ -640,10 +650,12 @@ def main():
                        help='Long seek duration in seconds (default: 60)')
     parser.add_argument('--throttle-delay', type=float, default=0.2,
                        help='Throttle delay for rapid seeking in seconds (default: 0.2)')
+    parser.add_argument('--continuous', action='store_true',
+                       help='Continuous playing mode - auto-advance to next video (default: pause at end)')
 
     args = parser.parse_args()
 
-    player = VideoPlayer(args.path, args.seek_short, args.seek_long, args.throttle_delay)
+    player = VideoPlayer(args.path, args.seek_short, args.seek_long, args.throttle_delay, args.continuous)
 
     logger = logging.getLogger(__name__)
     logger.info("Controls:")
@@ -658,6 +670,11 @@ def main():
     logger.info("  ]: Speed up 10% (max 3.0x)")
     logger.info("  [: Speed down 10% (min 0.1x)")
     logger.info("  q/ESC: Quit")
+    if args.continuous:
+        logger.info("\nContinuous mode: Videos will auto-advance")
+    else:
+        logger.info("\nPause mode: Videos will pause at end, press Enter for next video")
+    print()
     print()
 
     try:
