@@ -24,7 +24,7 @@ class TestVideoPlayer(unittest.TestCase):
         """Set up test fixtures"""
         self.temp_dir = tempfile.mkdtemp()
         self.temp_path = Path(self.temp_dir)
-        
+
         # Create test video files
         self.test_files = [
             self.temp_path / "video1.mp4",
@@ -32,7 +32,7 @@ class TestVideoPlayer(unittest.TestCase):
             self.temp_path / "video3.mkv",
             self.temp_path / "not_video.txt"
         ]
-        
+
         # Create the files
         for file_path in self.test_files:
             file_path.touch()
@@ -45,7 +45,7 @@ class TestVideoPlayer(unittest.TestCase):
     def test_init_with_directory(self):
         """Test VideoPlayer initialization with directory path"""
         player = VideoPlayer(str(self.temp_path))
-        
+
         # Should find 3 video files (excluding .txt)
         self.assertEqual(len(player.video_files), 3)
         self.assertEqual(player.current_index, 0)
@@ -58,7 +58,7 @@ class TestVideoPlayer(unittest.TestCase):
         """Test VideoPlayer initialization with specific video file"""
         video_file = self.test_files[1]  # video2.avi
         player = VideoPlayer(str(video_file))
-        
+
         # Should find all video files but set current index to the specified file
         self.assertEqual(len(player.video_files), 3)
         self.assertEqual(player.current_index, 1)  # video2.avi is at index 1
@@ -66,14 +66,14 @@ class TestVideoPlayer(unittest.TestCase):
     def test_init_with_custom_seek_times(self):
         """Test VideoPlayer initialization with custom seek times"""
         player = VideoPlayer(str(self.temp_path), seek_short=5, seek_long=30)
-        
+
         self.assertEqual(player.seek_short, 5)
         self.assertEqual(player.seek_long, 30)
 
     def test_load_video_files(self):
         """Test loading video files from directory"""
         player = VideoPlayer(str(self.temp_path))
-        
+
         # Check that only video files are loaded
         video_extensions = {'.mp4', '.avi', '.mkv'}
         for video_file in player.video_files:
@@ -82,7 +82,7 @@ class TestVideoPlayer(unittest.TestCase):
     def test_video_extensions_filtering(self):
         """Test that non-video files are filtered out"""
         player = VideoPlayer(str(self.temp_path))
-        
+
         # Should not include .txt file
         txt_file = self.temp_path / "not_video.txt"
         self.assertNotIn(txt_file, player.video_files)
@@ -90,12 +90,12 @@ class TestVideoPlayer(unittest.TestCase):
     def test_timestamps_functionality(self):
         """Test timestamp saving and loading"""
         player = VideoPlayer(str(self.temp_path))
-        
+
         # Test setting and getting timestamps
         test_timestamp = 123.45
         test_file = str(self.test_files[0])
         player.timestamps[test_file] = test_timestamp
-        
+
         self.assertEqual(player.timestamps[test_file], test_timestamp)
 
     @patch('pp.cv2.VideoCapture')
@@ -110,12 +110,12 @@ class TestVideoPlayer(unittest.TestCase):
             'cv2.CAP_PROP_POS_MSEC': 0.0
         }.get(str(prop), 0.0)
         mock_cv2_capture.return_value = mock_cap
-        
+
         player = VideoPlayer(str(self.temp_path))
         player.cap = None  # Reset cap
-        
+
         result = player.load_video(0)
-        
+
         self.assertTrue(result)
         mock_cv2_capture.assert_called_once()
 
@@ -126,22 +126,22 @@ class TestVideoPlayer(unittest.TestCase):
         mock_cap = Mock()
         mock_cap.isOpened.return_value = False
         mock_cv2_capture.return_value = mock_cap
-        
+
         player = VideoPlayer(str(self.temp_path))
         player.cap = None  # Reset cap
-        
+
         result = player.load_video(0)
-        
+
         self.assertFalse(result)
 
     def test_load_video_invalid_index(self):
         """Test loading video with invalid index"""
         player = VideoPlayer(str(self.temp_path))
-        
+
         # Test with negative index
         result = player.load_video(-1)
         self.assertFalse(result)
-        
+
         # Test with index beyond range
         result = player.load_video(len(player.video_files))
         self.assertFalse(result)
@@ -157,16 +157,16 @@ class TestVideoPlayer(unittest.TestCase):
             'cv2.CAP_PROP_FRAME_COUNT': 1800.0
         }.get(str(prop), 0.0)
         mock_cv2_capture.return_value = mock_cap
-        
+
         player = VideoPlayer(str(self.temp_path))
         player.cap = mock_cap
         player.fps = 30.0
         player.frame_count = 1800
-        
+
         # Test seeking forward
         player.seek(10)
         mock_cap.set.assert_called_with('cv2.CAP_PROP_POS_MSEC', 20000.0)
-        
+
         # Test seeking backward
         player.seek(-5)
         mock_cap.set.assert_called_with('cv2.CAP_PROP_POS_MSEC', 5000.0)
@@ -175,7 +175,7 @@ class TestVideoPlayer(unittest.TestCase):
         """Test next video functionality"""
         player = VideoPlayer(str(self.temp_path))
         initial_index = player.current_index
-        
+
         with patch.object(player, 'load_video') as mock_load:
             player.next_video()
             expected_index = (initial_index + 1) % len(player.video_files)
@@ -185,7 +185,7 @@ class TestVideoPlayer(unittest.TestCase):
         """Test previous video functionality"""
         player = VideoPlayer(str(self.temp_path))
         initial_index = player.current_index
-        
+
         with patch.object(player, 'load_video') as mock_load:
             player.prev_video()
             expected_index = (initial_index - 1) % len(player.video_files)
@@ -194,29 +194,29 @@ class TestVideoPlayer(unittest.TestCase):
     def test_save_load_timestamps(self):
         """Test timestamp persistence"""
         player = VideoPlayer(str(self.temp_path))
-        
+
         # Set some test timestamps
         test_data = {
             "video1.mp4": 123.45,
             "video2.avi": 67.89
         }
         player.timestamps = test_data
-        
+
         # Save timestamps
         player.save_timestamps()
-        
+
         # Create new player instance and load timestamps
         new_player = VideoPlayer(str(self.temp_path))
-        
+
         # Check if timestamps were loaded correctly
         timestamp_file = Path.home() / '.pp_timestamps.json'
         if timestamp_file.exists():
             with open(timestamp_file, 'r') as f:
                 loaded_data = json.load(f)
-            
+
             # Clean up
             timestamp_file.unlink()
-            
+
             # Verify data matches
             for key, value in test_data.items():
                 if key in loaded_data:
@@ -230,13 +230,13 @@ class TestVideoPlayerIntegration(unittest.TestCase):
         """Set up test fixtures"""
         self.temp_dir = tempfile.mkdtemp()
         self.temp_path = Path(self.temp_dir)
-        
+
         # Create test video files
         self.test_files = [
             self.temp_path / "test1.mp4",
             self.temp_path / "test2.avi",
         ]
-        
+
         for file_path in self.test_files:
             file_path.touch()
 
@@ -248,7 +248,7 @@ class TestVideoPlayerIntegration(unittest.TestCase):
     def test_full_initialization_flow(self):
         """Test complete initialization flow"""
         player = VideoPlayer(str(self.temp_path))
-        
+
         # Verify all components are initialized
         self.assertIsNotNone(player.video_files)
         self.assertIsNotNone(player.timestamps)
