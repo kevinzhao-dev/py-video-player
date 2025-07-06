@@ -31,6 +31,7 @@ class VideoPlayer:
         self.fps = 30
         self.frame_count = 0
         self.current_frame = 0
+        self.playback_speed = 1.0  # Default playback speed
 
         # Audio support using ffplay
         self.audio_process = None
@@ -139,9 +140,15 @@ class VideoPlayer:
             if start_time > 0:
                 cmd.extend(['-ss', str(start_time)])
 
-            # Add volume control
+            # Add audio filters for volume and speed
+            audio_filters = []
             if self.is_muted:
-                cmd.extend(['-af', 'volume=0'])
+                audio_filters.append('volume=0')
+            if self.playback_speed != 1.0:
+                audio_filters.append(f'atempo={self.playback_speed}')
+
+            if audio_filters:
+                cmd.extend(['-af', ','.join(audio_filters)])
 
             cmd.append(str(video_path))
 
@@ -251,9 +258,25 @@ class VideoPlayer:
             self.stop_audio()
             self.play_audio(current_video, new_time)
 
+    def change_playback_speed(self, delta: float):
+        """Change playback speed by delta amount"""
+        old_speed = self.playback_speed
+        self.playback_speed = max(0.1, min(3.0, self.playback_speed + delta))
+
+        if abs(self.playback_speed - old_speed) > 0.01:  # Only update if speed actually changed
+            print(f"Playback speed: {self.playback_speed:.1f}x")
+
+            # Restart audio with new speed to maintain sync
+            if self.audio_available and self.audio_process:
+                current_video = self.video_files[self.current_index]
+                current_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if self.cap else 0
+                self.stop_audio()
+                self.play_audio(current_video, current_time)
+
     def update_window_title(self, video_name: str):
         """Update window title with current video name"""
-        title = f"pp - {video_name} ({self.current_index + 1}/{len(self.video_files)})"
+        speed_indicator = f" [{self.playback_speed:.1f}x]" if self.playback_speed != 1.0 else ""
+        title = f"pp - {video_name} ({self.current_index + 1}/{len(self.video_files)}){speed_indicator}"
         cv2.setWindowTitle('Video Player', title)
 
     def play(self):
@@ -272,8 +295,8 @@ class VideoPlayer:
                 current_time = time.time()
                 time_since_last_frame = current_time - last_frame_time
 
-                # Only read new frame if enough time has passed
-                if time_since_last_frame >= (1.0 / self.fps):
+                # Only read new frame if enough time has passed (adjusted for speed)
+                if time_since_last_frame >= (1.0 / (self.fps * self.playback_speed)):
                     ret, frame = self.cap.read()
                     if not ret:
                         # End of video, go to next
@@ -318,6 +341,12 @@ class VideoPlayer:
                 self.prev_video()
             elif key == ord('k') or key == 13:  # Next video (k or Enter)
                 self.next_video()
+            elif key == ord(']'):  # Speed up 10%
+                self.change_playback_speed(0.1)
+                self.update_window_title(self.video_files[self.current_index].name)
+            elif key == ord('['):  # Speed down 10%
+                self.change_playback_speed(-0.1)
+                self.update_window_title(self.video_files[self.current_index].name)
 
         # Cleanup
         if self.cap:
@@ -363,6 +392,8 @@ def main():
     print("  j: Previous video")
     print("  k/Enter: Next video")
     print("  m: Mute/Unmute")
+    print("  ]: Speed up 10% (max 3.0x)")
+    print("  [: Speed down 10% (min 0.1x)")
     print("  q/ESC: Quit")
     print()
 
