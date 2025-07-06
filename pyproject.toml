@@ -37,9 +37,8 @@ Issues = "https://github.com/kevinzhao-dev/py-video-player/issues"
 [project.scripts]
 pp = "pp:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["pp*"]
+[tool.setuptools]
+py-modules = ["pp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
