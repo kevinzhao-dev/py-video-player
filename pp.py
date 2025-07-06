@@ -115,6 +115,9 @@ class VideoPlayer:
                 self.cap.set(cv2.CAP_PROP_POS_MSEC, saved_time * 1000)
 
             print(f"Playing: {video_path.name} ({self.current_index + 1}/{len(self.video_files)})")
+
+            # Update window title with video name
+            self.update_window_title(video_path.name)
             return True
         return False
 
@@ -131,6 +134,11 @@ class VideoPlayer:
         new_time = min(new_time, duration)
 
         self.cap.set(cv2.CAP_PROP_POS_MSEC, new_time * 1000)
+
+    def update_window_title(self, video_name: str):
+        """Update window title with current video name"""
+        title = f"pp - {video_name} ({self.current_index + 1}/{len(self.video_files)})"
+        cv2.setWindowTitle('Video Player', title)
 
     def play(self):
         """Main playback loop"""
@@ -190,12 +198,14 @@ class VideoPlayer:
     def next_video(self):
         """Switch to next video"""
         next_index = (self.current_index + 1) % len(self.video_files)
-        self.load_video(next_index)
+        if self.load_video(next_index):
+            self.update_window_title(self.video_files[self.current_index].name)
 
     def prev_video(self):
         """Switch to previous video"""
         prev_index = (self.current_index - 1) % len(self.video_files)
-        self.load_video(prev_index)
+        if self.load_video(prev_index):
+            self.update_window_title(self.video_files[self.current_index].name)
 
 
 def main():
