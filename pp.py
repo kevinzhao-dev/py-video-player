@@ -12,6 +12,7 @@ import time
 import threading
 import subprocess
 import signal
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -33,9 +34,17 @@ class VideoPlayer:
         self.current_frame = 0
         self.playback_speed = 1.0  # Default playback speed
 
+        # Status display
+        self.status_text = ""
+        self.status_start_time = 0
+        self.status_duration = 2.5  # Show status for 2.5 seconds
+
         # Audio support using ffplay
         self.audio_process = None
         self.audio_available = self.check_ffplay_available()
+
+        # Setup logging
+        self.setup_logging()
 
         # Supported video extensions
         self.video_extensions = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
@@ -45,6 +54,67 @@ class VideoPlayer:
 
         # Load saved timestamps
         self.load_timestamps()
+
+    def setup_logging(self):
+        """Setup logging configuration"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(Path.home() / '.pp_player.log'),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def show_status(self, message: str):
+        """Show status message on screen for a few seconds"""
+        self.status_text = message
+        self.status_start_time = time.time()
+        self.logger.info(message)
+
+    def draw_status_overlay(self, frame):
+        """Draw status overlay on frame if active"""
+        if not self.status_text:
+            return frame
+
+        current_time = time.time()
+        elapsed = current_time - self.status_start_time
+
+        if elapsed > self.status_duration:
+            self.status_text = ""
+            return frame
+
+        # Calculate fade effect (fade out in last 0.5 seconds)
+        fade_start = self.status_duration - 0.5
+        if elapsed > fade_start:
+            alpha = 1.0 - ((elapsed - fade_start) / 0.5)
+        else:
+            alpha = 1.0
+
+        # Create overlay
+        overlay = frame.copy()
+        height, width = frame.shape[:2]
+
+        # Status background
+        text_size = cv2.getTextSize(self.status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
+        text_x = (width - text_size[0]) // 2
+        text_y = height - 80
+
+        # Semi-transparent background
+        cv2.rectangle(overlay, 
+                     (text_x - 20, text_y - text_size[1] - 20),
+                     (text_x + text_size[0] + 20, text_y + 20),
+                     (0, 0, 0), -1)
+
+        # Status text
+        cv2.putText(overlay, self.status_text, (text_x, text_y), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+        # Blend with alpha
+        frame = cv2.addWeighted(frame, 1 - alpha * 0.7, overlay, alpha * 0.7, 0)
+
+        return frame
 
     def load_video_files(self):
         """Load all video files from the given path"""
@@ -56,7 +126,7 @@ class VideoPlayer:
             directory = self.path
 
         if not directory.exists():
-            print(f"Error: Path {directory} does not exist")
+            self.logger.error(f"Path {directory} does not exist")
             sys.exit(1)
 
         # Find all video files
@@ -68,14 +138,14 @@ class VideoPlayer:
         self.video_files.sort()
 
         if not self.video_files:
-            print(f"No video files found in {directory}")
+            self.logger.error(f"No video files found in {directory}")
             sys.exit(1)
 
         # If a specific file was provided, set it as current
         if self.path.is_file() and self.path in self.video_files:
             self.current_index = self.video_files.index(self.path)
 
-        print(f"Found {len(self.video_files)} video files")
+        self.logger.info(f"Found {len(self.video_files)} video files")
 
     def load_timestamps(self):
         """Load saved timestamps from file"""
@@ -103,8 +173,8 @@ class VideoPlayer:
                          stderr=subprocess.DEVNULL, check=True)
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print("Warning: ffplay not found. Audio playback disabled.")
-            print("Install ffmpeg to enable audio: https://ffmpeg.org/download.html")
+            self.logger.warning("ffplay not found. Audio playback disabled.")
+            self.logger.info("Install ffmpeg to enable audio: https://ffmpeg.org/download.html")
             return False
 
     def stop_audio(self):
@@ -161,7 +231,7 @@ class VideoPlayer:
             )
 
         except Exception as e:
-            print(f"Warning: Could not start audio for {video_path.name}: {e}")
+            self.logger.warning(f"Could not start audio for {video_path.name}: {e}")
 
     def pause_audio(self):
         """Pause audio playback"""
@@ -216,7 +286,7 @@ class VideoPlayer:
 
             self.cap = cv2.VideoCapture(str(video_path))
             if not self.cap.isOpened():
-                print(f"Error: Cannot open video {video_path}")
+                self.logger.error(f"Cannot open video {video_path}")
                 return False
 
             self.fps = self.cap.get(cv2.CAP_PROP_FPS)
@@ -230,7 +300,8 @@ class VideoPlayer:
             # Start audio playback
             self.play_audio(video_path, saved_time)
 
-            print(f"Playing: {video_path.name} ({self.current_index + 1}/{len(self.video_files)})")
+            self.logger.info(f"Playing: {video_path.name} ({self.current_index + 1}/{len(self.video_files)})")
+            self.show_status(f"Playing: {video_path.name}")
 
             # Update window title with video name
             self.update_window_title(video_path.name)
@@ -264,7 +335,7 @@ class VideoPlayer:
         self.playback_speed = max(0.1, min(3.0, self.playback_speed + delta))
 
         if abs(self.playback_speed - old_speed) > 0.01:  # Only update if speed actually changed
-            print(f"Playback speed: {self.playback_speed:.1f}x")
+            self.show_status(f"Speed: {self.playback_speed:.1f}x")
 
             # Restart audio with new speed to maintain sync
             if self.audio_available and self.audio_process:
@@ -306,7 +377,9 @@ class VideoPlayer:
                         last_frame_time = time.time()
                         continue
 
-                    cv2.imshow('Video Player', frame)
+                    # Add status overlay
+                    frame_with_status = self.draw_status_overlay(frame)
+                    cv2.imshow('Video Player', frame_with_status)
                     last_frame_time = current_time
 
             # Handle keyboard input with proper delay
@@ -318,25 +391,26 @@ class VideoPlayer:
                 self.is_playing = not self.is_playing
                 if self.is_playing:
                     self.resume_audio()
+                    self.show_status("Playing")
                 else:
                     self.pause_audio()
-                print("Paused" if not self.is_playing else "Playing")
+                    self.show_status("Paused")
             elif key == ord('m'):  # Mute toggle
                 self.is_muted = not self.is_muted
                 self.set_audio_volume(self.is_muted)
-                print("Muted" if self.is_muted else "Unmuted")
+                self.show_status("Muted" if self.is_muted else "Unmuted")
             elif key == 81 or key == 2:  # Left arrow - seek backward (short)
                 self.seek(-self.seek_short)
-                print(f"Seeking backward {self.seek_short}s")
+                self.show_status(f"◀ {self.seek_short}s")
             elif key == 83 or key == 3:  # Right arrow - seek forward (short)
                 self.seek(self.seek_short)
-                print(f"Seeking forward {self.seek_short}s")
+                self.show_status(f"▶ {self.seek_short}s")
             elif key == 82 or key == 0:  # Up arrow - seek forward (long)
                 self.seek(self.seek_long)
-                print(f"Seeking forward {self.seek_long}s")
+                self.show_status(f"▶▶ {self.seek_long}s")
             elif key == 84 or key == 1:  # Down arrow - seek backward (long)
                 self.seek(-self.seek_long)
-                print(f"Seeking backward {self.seek_long}s")
+                self.show_status(f"◀◀ {self.seek_long}s")
             elif key == ord('j'):  # Previous video
                 self.prev_video()
             elif key == ord('k') or key == 13:  # Next video (k or Enter)
@@ -385,24 +459,25 @@ def main():
 
     player = VideoPlayer(args.path, args.seek_short, args.seek_long)
 
-    print("Controls:")
-    print("  Space: Pause/Play")
-    print("  Left/Right: Seek ±10s (or custom)")
-    print("  Up/Down: Seek ±1min (or custom)")
-    print("  j: Previous video")
-    print("  k/Enter: Next video")
-    print("  m: Mute/Unmute")
-    print("  ]: Speed up 10% (max 3.0x)")
-    print("  [: Speed down 10% (min 0.1x)")
-    print("  q/ESC: Quit")
+    logger = logging.getLogger(__name__)
+    logger.info("Controls:")
+    logger.info("  Space: Pause/Play")
+    logger.info("  Left/Right: Seek ±10s (or custom)")
+    logger.info("  Up/Down: Seek ±1min (or custom)")
+    logger.info("  j: Previous video")
+    logger.info("  k/Enter: Next video")
+    logger.info("  m: Mute/Unmute")
+    logger.info("  ]: Speed up 10% (max 3.0x)")
+    logger.info("  [: Speed down 10% (min 0.1x)")
+    logger.info("  q/ESC: Quit")
     print()
 
     try:
         player.play()
     except KeyboardInterrupt:
-        print("\nExiting...")
+        logger.info("Exiting...")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
 
 
 if __name__ == "__main__":
